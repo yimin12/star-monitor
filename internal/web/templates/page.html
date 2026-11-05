@@ -1,0 +1,95 @@
+{{define "page"}}<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false}'>
+<title>Star Monitor</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/htmx.min.js" defer></script>
+</head>
+<body>
+<header>
+  <h1>Star Monitor</h1>
+  <p class="sub">近 {{.Window}} 天正在获得关注、且已有基础的仓库，每 6 小时更新</p>
+</header>
+<form class="filters" action="/" method="get" hx-get="/rows" hx-target="#board" hx-trigger="change" hx-push-url="true" hx-indicator="#board">
+  <label>来源
+    <select name="source">
+      <option value="github"{{if eq .Q.Source "github"}} selected{{end}}>GitHub</option>
+      <option value="gitlab"{{if eq .Q.Source "gitlab"}} selected{{end}}>GitLab</option>
+    </select>
+  </label>
+  <label>排序
+    <select name="sort">
+      <option value="score"{{if or (eq .Q.Sort "score") (eq .Q.Sort "")}} selected{{end}}>关注分</option>
+      <option value="delta"{{if eq .Q.Sort "delta"}} selected{{end}}>增星数</option>
+      <option value="growth"{{if eq .Q.Sort "growth"}} selected{{end}}>增长率</option>
+    </select>
+  </label>
+  <label>语言
+    <select name="lang">
+      <option value="">全部</option>
+      {{range .Languages}}<option{{if eq . $.Q.Language}} selected{{end}}>{{.}}</option>{{end}}
+    </select>
+  </label>
+  <label>最少星数
+    <select name="min">
+      {{range $m := list "0" "1000" "5000" "20000"}}<option value="{{$m}}"{{if eq $m (printf "%d" $.Q.MinStars)}} selected{{end}}>{{if eq $m "0"}}不限{{else}}{{$m}}{{end}}</option>{{end}}
+    </select>
+  </label>
+  <label class="check"><input type="checkbox" name="nospike" value="1"{{if .Q.HideSpikes}} checked{{end}}> 隐藏单日爆发</label>
+  <noscript><button type="submit">筛选</button></noscript>
+</form>
+<main id="board">{{template "rows" .}}</main>
+<footer>
+  <details>
+    <summary>关注分怎么算</summary>
+    <p><code>Score = A × B × M × P</code>，S0 是窗口开始时的星数，Δ 是窗口内的增量。</p>
+    <ul>
+      <li><b>A 关注度</b> = Δ / √(S0 + K)：介于绝对增量和增长率之间，大仓库不靠体量霸榜</li>
+      <li><b>B 基础</b> = S0 / (S0 + K)：从 0 起步的仓库得 0</li>
+      <li><b>M 势头</b> = 最近 5 天的增量占比 / 应有占比，限制在 0.5～1.5</li>
+      <li><b>P 持续性</b> = √(有效天数 / 天数)：增长集中在一天时变小</li>
+    </ul>
+    <p>GitHub 只追踪 ≥300 星、非 fork、未归档的仓库；取消的星无法看到，回填的历史是近似值。</p>
+  </details>
+</footer>
+</body>
+</html>{{end}}
+
+{{define "rows"}}
+<div class="status">
+  {{range .Runs}}<span class="run {{if .Running}}busy{{else if .OK}}ok{{else}}bad{{end}}" title="{{.Note}}">
+    {{.Source}}：{{if .Running}}采集中（{{ago .Started}}开始）{{else if .OK}}{{ago .Finished}}，{{num .Repos}} 个仓库{{else}}失败 {{ago .Finished}}{{end}}</span>{{end}}
+  {{if not .NextRun.IsZero}}<span>下次 {{short .NextRun}}</span>{{end}}
+  <span>历史 {{.Coverage}} 天{{if lt .Coverage .Window}}（满 {{.Window}} 天前榜单不完整）{{end}}</span>
+</div>
+{{if .Err}}<p class="empty">{{.Err}}</p>
+{{else if not .Rows}}<p class="empty">{{if .Running}}第一次采集进行中，至少要两次采集后才有增量。{{else}}还没有数据。{{end}}</p>
+{{else}}
+<table>
+<thead><tr>
+  <th class="n">#</th><th>仓库</th><th class="n">星数</th><th class="n">Δ</th><th class="n">增长</th><th class="n">关注分</th><th>每日增星</th>
+</tr></thead>
+<tbody>
+{{range $i, $r := .Rows}}<tr>
+  <td class="n rank">{{inc $i}}</td>
+  <td class="repo">
+    <a href="{{$r.URL}}" rel="noopener noreferrer" target="_blank">{{$r.FullName}}</a>
+    {{if $r.Language}}<span class="lang">{{$r.Language}}</span>{{end}}
+    {{if $r.Spike}}<span class="tag warn" title="一天占了一半以上的增量">单日爆发</span>{{end}}
+    {{if lt $r.Days $.Window}}<span class="tag" title="窗口开始时的星数未知，只用了 {{$r.Days}} 天">仅 {{$r.Days}} 天</span>{{end}}
+    {{if $r.Backfilled}}<span class="tag" title="窗口内的历史由加星时间回填，近似值">回填</span>{{end}}
+    {{if $r.Description}}<div class="desc">{{$r.Description}}</div>{{end}}
+  </td>
+  <td class="n">{{num $r.Now}}</td>
+  <td class="n strong">+{{num $r.Delta}}</td>
+  <td class="n">{{pct $r.Growth}}</td>
+  <td class="n" title="A {{fixed $r.A}} × B {{printf "%.2f" $r.B}} × M {{printf "%.2f" $r.M}} × P {{printf "%.2f" $r.P}}">{{fixed $r.Score}}</td>
+  <td>{{spark $r.Series}}</td>
+</tr>{{end}}
+</tbody>
+</table>
+{{end}}
+{{end}}
