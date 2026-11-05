@@ -96,7 +96,15 @@ func (g *GitLab) get(ctx context.Context, u string, out any) error {
 				lastErr = rerr
 			case res.StatusCode == http.StatusOK:
 				return json.Unmarshal(body, out)
-			case res.StatusCode == http.StatusTooManyRequests || res.StatusCode >= 500:
+			case res.StatusCode == http.StatusTooManyRequests:
+				lastErr = fmt.Errorf("gitlab: %s", res.Status)
+				wait := gitlabWait(res.Header)
+				g.Log.Warn("gitlab rate limited", "wait", wait.String())
+				if err := sleep(ctx, wait); err != nil {
+					return err
+				}
+				continue
+			case res.StatusCode >= 500:
 				lastErr = fmt.Errorf("gitlab: %s", res.Status)
 				g.Log.Warn("gitlab retry", "status", res.StatusCode)
 			default:
@@ -108,4 +116,17 @@ func (g *GitLab) get(ctx context.Context, u string, out any) error {
 		}
 	}
 	return lastErr
+}
+
+// gitlabWait follows Retry-After or RateLimit-Reset, capped at 15 minutes.
+func gitlabWait(h http.Header) time.Duration {
+	wait := time.Minute
+	if v, err := strconv.Atoi(h.Get("Retry-After")); err == nil && v > 0 {
+		wait = time.Duration(v) * time.Second
+	} else if v, err := strconv.ParseInt(h.Get("RateLimit-Reset"), 10, 64); err == nil {
+		if d := time.Until(time.Unix(v, 0)); d > 0 {
+			wait = d
+		}
+	}
+	return min(wait+time.Second, 15*time.Minute)
 }

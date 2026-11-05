@@ -72,10 +72,15 @@ func (c *Collector) RunOnce(ctx context.Context) {
 	c.mu.Unlock()
 	defer func() { c.mu.Lock(); c.running = false; c.mu.Unlock() }()
 
-	if c.GitLab != nil {
+	// GitHub first: it is the main source. Each source runs only when its last
+	// successful pass is older than Interval, so restarts do not repeat a pass
+	// that already finished (GitLab rate-limited repeated passes with 429).
+	if c.due(ctx, "github") {
+		c.collect(ctx, "github", c.GitHub.Collect, func() int { return c.GitHub.Requests })
+	}
+	if c.GitLab != nil && c.due(ctx, "gitlab") {
 		c.collect(ctx, "gitlab", c.GitLab.Collect, func() int { return c.GitLab.Requests })
 	}
-	c.collect(ctx, "github", c.GitHub.Collect, func() int { return c.GitHub.Requests })
 	c.recompute(ctx)
 	if c.GitHub.Token != "" && c.BackfillRepos > 0 {
 		c.backfill(ctx)
@@ -84,6 +89,16 @@ func (c *Collector) RunOnce(ctx context.Context) {
 	if err := c.Store.Prune(ctx, c.KeepDays, time.Now()); err != nil {
 		c.Log.Error("prune", "err", err)
 	}
+}
+
+// due reports whether a source's last successful pass is older than Interval.
+func (c *Collector) due(ctx context.Context, source string) bool {
+	last, err := c.Store.LastSuccess(ctx, source)
+	if err != nil {
+		c.Log.Error("read last run", "source", source, "err", err)
+		return true
+	}
+	return time.Since(last) >= c.Interval
 }
 
 func (c *Collector) collect(ctx context.Context, name string, fn func(context.Context, func([]store.Repo) error, *store.Progress) (int, error), requests func() int) {
