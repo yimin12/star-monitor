@@ -67,9 +67,13 @@ CREATE TABLE IF NOT EXISTS backfill (
 );
 `
 
-// Store wraps the database. SQLite allows one writer, so writes are serialized
-// by keeping a single connection.
-type Store struct{ DB *sql.DB }
+// Store wraps the database. SQLite allows one writer, so writes go through a
+// single connection. Reads use a separate read-only pool: in WAL mode they run
+// alongside a write, so pages do not wait behind a collection pass.
+type Store struct {
+	DB   *sql.DB // writes
+	Read *sql.DB // reads for the web page
+}
 
 func Open(path string) (*Store, error) {
 	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(10000)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)")
@@ -80,7 +84,12 @@ func Open(path string) (*Store, error) {
 	if _, err := db.Exec(schema); err != nil {
 		return nil, fmt.Errorf("schema: %w", err)
 	}
-	return &Store{DB: db}, nil
+	read, err := sql.Open("sqlite", "file:"+path+"?mode=ro&_pragma=busy_timeout(5000)&_pragma=query_only(1)")
+	if err != nil {
+		return nil, err
+	}
+	read.SetMaxOpenConns(4)
+	return &Store{DB: db, Read: read}, nil
 }
 
 // Day is the UTC day number used as the key of the daily table.
@@ -263,7 +272,7 @@ type LastRun struct {
 }
 
 func (s *Store) LastRuns(ctx context.Context) ([]LastRun, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT source, started, COALESCE(finished, 0), ok, repos, requests, note
+	rows, err := s.Read.QueryContext(ctx, `SELECT source, started, COALESCE(finished, 0), ok, repos, requests, note
 FROM runs WHERE id IN (SELECT MAX(id) FROM runs GROUP BY source) ORDER BY source`)
 	if err != nil {
 		return nil, err
@@ -289,7 +298,7 @@ FROM runs WHERE id IN (SELECT MAX(id) FROM runs GROUP BY source) ORDER BY source
 // LastSuccess is when a source last finished a run successfully, or zero.
 func (s *Store) LastSuccess(ctx context.Context, source string) (time.Time, error) {
 	var ts sql.NullInt64
-	err := s.DB.QueryRowContext(ctx, `SELECT MAX(finished) FROM runs WHERE source = ? AND ok = 1`, source).Scan(&ts)
+	err := s.Read.QueryRowContext(ctx, `SELECT MAX(finished) FROM runs WHERE source = ? AND ok = 1`, source).Scan(&ts)
 	if err != nil || !ts.Valid {
 		return time.Time{}, err
 	}

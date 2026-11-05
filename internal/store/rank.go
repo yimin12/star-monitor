@@ -128,7 +128,7 @@ func (s *Store) Top(ctx context.Context, q Query) ([]Row, error) {
 		limit = 100
 	}
 	args = append(args, limit)
-	rows, err := s.DB.QueryContext(ctx, fmt.Sprintf(`SELECT r.id, r.source, r.full_name, r.url, r.description, r.language, r.created_at,
+	rows, err := s.Read.QueryContext(ctx, fmt.Sprintf(`SELECT r.id, r.source, r.full_name, r.url, r.description, r.language, r.created_at,
   s.s0, s.now, s.delta, s.recent, s.days, s.a, s.b, s.m, s.p, s.score, s.spike, s.series,
   EXISTS (SELECT 1 FROM backfill b WHERE b.repo_id = r.id AND b.ok = 1)
 FROM scores s JOIN repos r ON r.id = s.repo_id
@@ -153,7 +153,7 @@ WHERE %s ORDER BY %s LIMIT ?`, strings.Join(where, " AND "), order), args...)
 
 // Languages lists the most common languages among scored repositories of a source.
 func (s *Store) Languages(ctx context.Context, source string, limit int) ([]string, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT r.language FROM scores s JOIN repos r ON r.id = s.repo_id
+	rows, err := s.Read.QueryContext(ctx, `SELECT r.language FROM scores s JOIN repos r ON r.id = s.repo_id
 WHERE r.source = ? AND r.language != '' AND s.delta > 0 GROUP BY r.language ORDER BY COUNT(*) DESC LIMIT ?`, source, limit)
 	if err != nil {
 		return nil, err
@@ -173,7 +173,7 @@ WHERE r.source = ? AND r.language != '' AND s.delta > 0 GROUP BY r.language ORDE
 // Coverage is how many days of observed history the database holds.
 func (s *Store) Coverage(ctx context.Context, source string) (int, error) {
 	var n int
-	err := s.DB.QueryRowContext(ctx, `SELECT COUNT(DISTINCT d.day) FROM daily d JOIN repos r ON r.id = d.repo_id
+	err := s.Read.QueryRowContext(ctx, `SELECT COUNT(DISTINCT d.day) FROM daily d JOIN repos r ON r.id = d.repo_id
 WHERE r.source = ? AND d.observed = 1`, source).Scan(&n)
 	return n, err
 }

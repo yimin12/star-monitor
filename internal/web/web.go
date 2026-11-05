@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/yimin12/star-monitor/internal/store"
@@ -28,7 +29,38 @@ type Server struct {
 	Interval time.Duration
 	Running  func() bool
 
-	tmpl *template.Template
+	tmpl  *template.Template
+	mu    sync.Mutex
+	stats map[string]cachedStats
+}
+
+// cachedStats holds per-source figures that only change after a collection pass
+// but cost full scans: languages and days of history.
+type cachedStats struct {
+	at        time.Time
+	languages []string
+	coverage  int
+}
+
+const statsTTL = time.Minute
+
+func (s *Server) sourceStats(r *http.Request, source string) cachedStats {
+	s.mu.Lock()
+	c, ok := s.stats[source]
+	s.mu.Unlock()
+	if ok && time.Since(c.at) < statsTTL {
+		return c
+	}
+	c = cachedStats{at: time.Now()}
+	c.languages, _ = s.Store.Languages(r.Context(), source, 30)
+	c.coverage, _ = s.Store.Coverage(r.Context(), source)
+	s.mu.Lock()
+	if s.stats == nil {
+		s.stats = map[string]cachedStats{}
+	}
+	s.stats[source] = c
+	s.mu.Unlock()
+	return c
 }
 
 func (s *Server) Handler() http.Handler {
@@ -93,9 +125,9 @@ func (s *Server) load(r *http.Request) view {
 		s.Log.Error("top", "err", err)
 		v.Err = "读取榜单失败"
 	}
-	v.Languages, _ = s.Store.Languages(ctx, v.Q.Source, 30)
+	stats := s.sourceStats(r, v.Q.Source)
+	v.Languages, v.Coverage = stats.languages, stats.coverage
 	v.Runs, _ = s.Store.LastRuns(ctx)
-	v.Coverage, _ = s.Store.Coverage(ctx, v.Q.Source)
 	if last, _ := s.Store.LastSuccess(ctx, "github"); !last.IsZero() {
 		v.NextRun = last.Add(s.Interval)
 	}
