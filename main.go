@@ -58,14 +58,16 @@ func main() {
 	githubParams.K = float64(envInt("GITHUB_K", 1000))
 
 	c := &collector.Collector{
-		Store:            st,
-		Log:              log,
-		Interval:         interval,
-		Window:           window,
-		KeepDays:         envInt("KEEP_DAYS", 45),
-		GitHub:           &source.GitHub{Token: os.Getenv("GITHUB_TOKEN"), MinStars: envInt("GITHUB_MIN_STARS", 300), HTTP: hc, Log: log},
-		Params:           map[string]score.Params{"github": githubParams, "gitlab": gitlabParams},
-		BackfillRepos:    envInt("BACKFILL_REPOS", 300),
+		Store:    st,
+		Log:      log,
+		Interval: interval,
+		Window:   window,
+		KeepDays: envInt("KEEP_DAYS", 45),
+		GitHub:   &source.GitHub{Token: os.Getenv("GITHUB_TOKEN"), MinStars: envInt("GITHUB_MIN_STARS", 300), HTTP: hc, Log: log},
+		Params:   map[string]score.Params{"github": githubParams, "gitlab": gitlabParams},
+		// Off by default: since July 2026 GitHub lists stargazers only to repo
+		// admins and collaborators, so other repositories cannot be backfilled.
+		BackfillRepos:    envInt("BACKFILL_REPOS", 0),
 		BackfillRequests: envInt("BACKFILL_REQUESTS", 2000),
 		BackfillMaxStars: envInt("BACKFILL_MAX_STARS", 40000),
 	}
@@ -73,7 +75,7 @@ func main() {
 		c.GitLab = &source.GitLab{MinStars: envInt("GITLAB_MIN_STARS", 50), HTTP: hc, Log: log}
 	}
 	if c.GitHub.Token == "" {
-		log.Warn("GITHUB_TOKEN is empty: search is limited to 10 requests a minute and backfill is off")
+		log.Warn("GITHUB_TOKEN is empty: search is limited to 10 requests a minute")
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

@@ -21,8 +21,9 @@ P persistence = √(Neff / days), Neff = 1 / Σ(daily share²)
 - **GitHub:** search by star range (search returns at most 1000 results per query),
   repositories with at least `GITHUB_MIN_STARS` (300) stars, no forks or archived ones.
 - **GitLab:** public gitlab.com projects by star count, down to `GITLAB_MIN_STARS` (50).
-- **Backfill:** repositories without a full window get their history rebuilt from
-  stargazer dates, up to 40,000 stars. Unstars are not visible, so it is approximate.
+- **History:** a full 15-day window takes 15 days of collection. Backfilling from
+  stargazer dates is off (`BACKFILL_REPOS=0`): since July 2026 GitHub lists stargazers
+  only to a repository's admins and collaborators.
 
 One SQLite file holds one count per repository per UTC day, kept for 45 days.
 
@@ -30,13 +31,13 @@ One SQLite file holds one count per repository per UTC day, kept for 45 days.
 
 | Variable | Default |
 |---|---|
-| `GITHUB_TOKEN` | empty: 10 searches a minute and no backfill |
+| `GITHUB_TOKEN` | empty: 10 searches a minute |
 | `DB_PATH` | `star-monitor.db` |
 | `INTERVAL` | `6h` |
 | `WINDOW_DAYS` | `15` |
 | `GITHUB_MIN_STARS`, `GITLAB_MIN_STARS` | `300`, `50` |
 | `GITHUB_K`, `GITLAB_K` | `1000`, `100` |
-| `BACKFILL_REPOS`, `BACKFILL_REQUESTS`, `BACKFILL_MAX_STARS` | `300`, `2000`, `40000` |
+| `BACKFILL_REPOS`, `BACKFILL_REQUESTS`, `BACKFILL_MAX_STARS` | `0` (off), `2000`, `40000` |
 
 `star-monitor -once` runs one collection pass and exits.
 
