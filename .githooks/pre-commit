@@ -1,0 +1,11 @@
+#!/bin/sh
+# Fast checks on staged Go files: formatting and vet. Enable once per clone:
+#   git config core.hooksPath .githooks
+set -e
+files=$(git diff --cached --name-only --diff-filter=ACM -- '*.go')
+[ -z "$files" ] && exit 0
+bad=$(gofmt -l $files)
+if [ -n "$bad" ]; then
+  echo "gofmt needed:"; echo "$bad"; echo "run: gofmt -w $bad"; exit 1
+fi
+GOTOOLCHAIN=local go vet ./...

@@ -50,6 +50,9 @@ managed by Terraform in the homelab repository.
 
 ## Development
 
+Enable the git hooks once per clone: `git config core.hooksPath .githooks`.
+`pre-commit` checks gofmt and vet on staged Go files; `pre-push` runs the tests in Docker.
+
 ```bash
 docker run --rm -v "$PWD":/src -w /src golang:1.26.10 go test ./...
 docker build -t star-monitor .
