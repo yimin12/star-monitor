@@ -225,6 +225,26 @@ func (p *Progress) Mark(ctx context.Context, key string) error {
 	return err
 }
 
+// Cursor is the saved upper star bound of an interrupted run, or -1.
+func (p *Progress) Cursor() int {
+	c := -1
+	if p == nil {
+		return c
+	}
+	for k := range p.done {
+		var v int
+		if _, err := fmt.Sscanf(k, "cursor:%d", &v); err == nil && (c < 0 || v < c) {
+			c = v
+		}
+	}
+	return c
+}
+
+// SetCursor saves the upper star bound reached so far.
+func (p *Progress) SetCursor(ctx context.Context, hi int) error {
+	return p.Mark(ctx, fmt.Sprintf("cursor:%d", hi))
+}
+
 // Len is the number of finished ranges.
 func (p *Progress) Len() int {
 	if p == nil {

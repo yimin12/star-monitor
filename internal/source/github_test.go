@@ -48,30 +48,33 @@ func fakeSearch(t *testing.T, n int) *httptest.Server {
 	}))
 }
 
-func TestCollectSplitsRangesAndSeesEveryRepo(t *testing.T) {
+func TestCollectWalksDownAndSeesEveryRepo(t *testing.T) {
 	srv := fakeSearch(t, 2500)
 	defer srv.Close()
 	g := &GitHub{MinStars: 300, HTTP: srv.Client(), API: srv.URL, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	g.lastQuery = time.Now().Add(-time.Hour)
-	seen := map[int64]bool{}
-	// Skip the real pacing in tests.
 	orig := searchPace
 	searchPace = 0
 	defer func() { searchPace = orig }()
+	seen := map[int64]int{}
 	n, err := g.Collect(context.Background(), func(b []store.Repo) error {
 		for _, r := range b {
-			if seen[r.ExtID] {
-				t.Fatalf("repo %d saved twice", r.ExtID)
-			}
-			seen[r.ExtID] = true
+			seen[r.ExtID]++
 		}
 		return nil
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 2500 || len(seen) != 2500 {
-		t.Fatalf("saw %d repos (%d unique), want 2500", n, len(seen))
+	if len(seen) != 2500 {
+		t.Fatalf("saw %d unique repos, want 2500", len(seen))
+	}
+	// Only the boundary repository of each window is fetched twice.
+	if dup := n - len(seen); dup > 3 {
+		t.Fatalf("%d duplicate saves, want at most one per window", dup)
+	}
+	// One request per 100 repositories plus the boundary overlap; no probes.
+	if g.Requests > 26 {
+		t.Fatalf("%d requests for 2500 repositories", g.Requests)
 	}
 }
 
@@ -138,13 +141,13 @@ func TestCollectResumesAfterInterruption(t *testing.T) {
 		return nil
 	}
 
-	// First segment: stop after 12 pages, as a pod restart would.
+	// First segment: stop after 25 pages (two and a half windows), as a pod restart would.
 	cctx, cancel := context.WithCancel(ctx)
 	pages := 0
 	prog, _ := st.Progress(ctx, run)
 	g1 := newClient()
 	_, err = g1.Collect(cctx, func(b []store.Repo) error {
-		if pages++; pages == 12 {
+		if pages++; pages == 25 {
 			cancel()
 			return context.Canceled
 		}
@@ -153,8 +156,8 @@ func TestCollectResumesAfterInterruption(t *testing.T) {
 	if err == nil {
 		t.Fatal("first segment should stop early")
 	}
-	if prog.Len() == 0 {
-		t.Fatal("no ranges recorded before the interruption")
+	if prog.Cursor() < 0 {
+		t.Fatal("no cursor recorded before the interruption")
 	}
 
 	// Second segment: reload progress from the database and finish.

@@ -106,7 +106,7 @@ func (c *Collector) collect(ctx context.Context, name string, fn func(context.Co
 		c.Log.Error("load progress", "source", name, "err", err)
 		return
 	}
-	c.Log.Info("collect start", "source", name, "run", id, "resumed", resumed, "ranges_done", prog.Len())
+	c.Log.Info("collect start", "source", name, "run", id, "resumed", resumed, "cursor", prog.Cursor())
 	n, err := fn(ctx, func(batch []store.Repo) error { return c.Store.SaveBatch(ctx, batch, time.Now()) }, prog)
 	bg := context.WithoutCancel(ctx)
 	if errors.Is(err, context.Canceled) {
@@ -114,7 +114,7 @@ func (c *Collector) collect(ctx context.Context, name string, fn func(context.Co
 		if aerr := c.Store.AddRequests(bg, id, requests()-before); aerr != nil {
 			c.Log.Error("record requests", "err", aerr)
 		}
-		c.Log.Info("collect interrupted", "source", name, "run", id, "ranges_done", prog.Len())
+		c.Log.Info("collect interrupted", "source", name, "run", id, "cursor", prog.Cursor())
 		return
 	}
 	note := ""

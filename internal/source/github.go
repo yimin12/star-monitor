@@ -51,60 +51,84 @@ type ghSearch struct {
 	Items      []ghRepo `json:"items"`
 }
 
-// Collect walks every star range from MinStars up and passes each page to save.
-// Ranges already in prog are skipped, so an interrupted run can resume.
+// Collect walks repositories from the most stars down to MinStars. Each window
+// is one sorted search of up to 1000 results; the next window's upper bound is
+// the lowest star count just seen (inclusive, so ties at the boundary are
+// fetched again and deduplicated on save). The upper bound is saved in prog
+// after every window, so an interrupted run resumes where it stopped.
 func (g *GitHub) Collect(ctx context.Context, save func([]store.Repo) error, prog *store.Progress) (int, error) {
 	seen := 0
-	// Ranges are [lo, hi]; hi < 0 means unbounded.
-	queue := [][2]int{{g.MinStars, -1}}
-	for len(queue) > 0 {
-		lo, hi := queue[0][0], queue[0][1]
-		queue = queue[1:]
-		key := fmt.Sprintf("%d..%d", lo, hi)
-		if prog.Done(key) {
-			continue
-		}
-		n, split, err := g.collectRange(ctx, lo, hi, "", save)
+	hi := prog.Cursor() // -1: unbounded
+	for {
+		n, lowest, total, err := g.window(ctx, hi, save)
 		if err != nil {
 			return seen, err
 		}
 		seen += n
-		if !split {
-			if err := prog.Mark(ctx, key); err != nil {
-				return seen, err
-			}
-			continue
+		if total <= searchCap {
+			return seen, nil // the whole remaining range fit in this window
 		}
-		if hi >= 0 && lo == hi {
-			// One star value with over 1000 repositories: split by creation year.
+		next := lowest
+		if next == hi {
+			// Over 1000 repositories share this star count: split it by creation year.
 			for y := 2008; y <= time.Now().Year(); y++ {
-				ykey := fmt.Sprintf("%s@%d", key, y)
-				if prog.Done(ykey) {
-					continue
-				}
-				m, _, err := g.collectRange(ctx, lo, hi, fmt.Sprintf("created:%d-01-01..%d-12-31", y, y), save)
+				m, _, err := g.collectRange(ctx, hi, hi, fmt.Sprintf("created:%d-01-01..%d-12-31", y, y), save)
 				if err != nil {
 					return seen, err
 				}
 				seen += m
-				if err := prog.Mark(ctx, ykey); err != nil {
-					return seen, err
-				}
 			}
-			continue
+			next = hi - 1
 		}
-		top := hi
-		if top < 0 {
-			top = lo * 4
+		if next < g.MinStars {
+			return seen, nil
 		}
-		mid := lo + (top-lo)/2
-		queue = append(queue, [2]int{lo, mid}, [2]int{mid + 1, hi})
+		hi = next
+		if err := prog.SetCursor(ctx, hi); err != nil {
+			return seen, err
+		}
 	}
-	return seen, nil
 }
 
-// collectRange fetches one range. It reports split=true without saving when the
-// range holds more than the search cap.
+// window fetches up to 1000 repositories with MinStars..hi stars, most stars first.
+// It returns how many it saved, the lowest star count among them and the total
+// number of matches.
+func (g *GitHub) window(ctx context.Context, hi int, save func([]store.Repo) error) (n, lowest, total int, err error) {
+	q := fmt.Sprintf("stars:>=%d fork:false archived:false", g.MinStars)
+	if hi >= 0 {
+		q = fmt.Sprintf("stars:%d..%d fork:false archived:false", g.MinStars, hi)
+	}
+	lowest = hi
+	for page := 1; page <= searchCap/100; page++ {
+		var res ghSearch
+		if err := g.search(ctx, q, page, &res); err != nil {
+			return n, lowest, total, err
+		}
+		total = res.Total
+		if res.Incomplete {
+			g.Log.Warn("incomplete search results", "query", q, "page", page)
+		}
+		batch := make([]store.Repo, 0, len(res.Items))
+		for _, it := range res.Items {
+			batch = append(batch, store.Repo{Source: "github", ExtID: it.ID, FullName: it.FullName, URL: it.HTMLURL,
+				Description: it.Description, Language: it.Language, CreatedAt: it.CreatedAt, Stars: it.Stars})
+			if lowest < 0 || it.Stars < lowest {
+				lowest = it.Stars
+			}
+		}
+		if err := save(batch); err != nil {
+			return n, lowest, total, err
+		}
+		n += len(batch)
+		if len(res.Items) < 100 || page*100 >= res.Total {
+			break
+		}
+	}
+	return n, lowest, total, nil
+}
+
+// collectRange fetches up to 1000 repositories of one star range and extra
+// qualifier. It is used to split a single star count by creation year.
 func (g *GitHub) collectRange(ctx context.Context, lo, hi int, extra string, save func([]store.Repo) error) (int, bool, error) {
 	stars := fmt.Sprintf("stars:>=%d", lo)
 	if hi >= 0 {
@@ -119,9 +143,6 @@ func (g *GitHub) collectRange(ctx context.Context, lo, hi int, extra string, sav
 		var res ghSearch
 		if err := g.search(ctx, q, page, &res); err != nil {
 			return n, false, err
-		}
-		if page == 1 && res.Total > searchCap && extra == "" {
-			return 0, true, nil
 		}
 		if res.Incomplete {
 			g.Log.Warn("incomplete search results", "query", q, "page", page)
