@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http/httptest"
@@ -54,6 +55,22 @@ func TestPageRanksAndEscapes(t *testing.T) {
 	}
 	if rec.Header().Get("Content-Security-Policy") == "" {
 		t.Fatal("missing CSP")
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/top?limit=5", nil))
+	var top struct {
+		Items []struct {
+			Name  string `json:"name"`
+			Delta int    `json:"delta"`
+			Daily []int  `json:"daily"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &top); err != nil || len(top.Items) == 0 || top.Items[0].Name != "a/steady" {
+		t.Fatalf("api/top: %v %s", err, rec.Body.String())
+	}
+	if top.Items[0].Delta != 3000 || len(top.Items[0].Daily) != 15 {
+		t.Fatalf("api/top item: %+v", top.Items[0])
 	}
 
 	rec = httptest.NewRecorder()

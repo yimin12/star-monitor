@@ -4,6 +4,7 @@ package web
 
 import (
 	"embed"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -52,6 +53,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /static/", http.StripPrefix("/static/", cacheFor(http.FileServer(http.FS(static)), 24*time.Hour)))
 	mux.HandleFunc("GET /{$}", s.page)
 	mux.HandleFunc("GET /rows", s.rows)
+	mux.HandleFunc("GET /api/top", s.apiTop)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok\n")) })
 	return securityHeaders(mux)
 }
@@ -108,6 +110,55 @@ func (s *Server) render(w http.ResponseWriter, name string, v view) {
 	if err := s.tmpl.ExecuteTemplate(w, name, v); err != nil {
 		s.Log.Error("render", "template", name, "err", err)
 	}
+}
+
+// apiTop returns the ranking as JSON for other dashboards. Same filters as the
+// page; at most 50 rows.
+func (s *Server) apiTop(w http.ResponseWriter, r *http.Request) {
+	q := s.query(r)
+	if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && n > 0 {
+		q.Limit = min(n, 50)
+	} else {
+		q.Limit = 10
+	}
+	rows, err := s.Store.Top(r.Context(), q)
+	if err != nil {
+		s.Log.Error("api top", "err", err)
+		http.Error(w, `{"error":"unavailable"}`, http.StatusInternalServerError)
+		return
+	}
+	type item struct {
+		Name        string  `json:"name"`
+		URL         string  `json:"url"`
+		Language    string  `json:"language,omitempty"`
+		Description string  `json:"description,omitempty"`
+		Stars       int     `json:"stars"`
+		Delta       int     `json:"delta"`
+		Score       float64 `json:"score"`
+		Days        int     `json:"days"`
+		Spike       bool    `json:"spike"`
+		Daily       []int   `json:"daily"`
+	}
+	out := struct {
+		Source string `json:"source"`
+		Window int    `json:"window"`
+		Items  []item `json:"items"`
+	}{Source: q.Source, Window: s.Window, Items: []item{}}
+	for _, row := range rows {
+		daily := []int{}
+		for i := 1; i < len(row.Series); i++ {
+			if row.Series[i] >= 0 && row.Series[i-1] >= 0 {
+				daily = append(daily, max(0, row.Series[i]-row.Series[i-1]))
+			} else {
+				daily = append(daily, -1)
+			}
+		}
+		out.Items = append(out.Items, item{Name: row.FullName, URL: row.URL, Language: row.Language, Description: row.Description,
+			Stars: row.Now, Delta: row.Delta, Score: math.Round(row.Score*10) / 10, Days: row.Days, Spike: row.Spike, Daily: daily})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	_ = json.NewEncoder(w).Encode(out)
 }
 
 func securityHeaders(next http.Handler) http.Handler {
