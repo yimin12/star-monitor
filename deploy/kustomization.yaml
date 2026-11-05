@@ -8,4 +8,4 @@ resources:
   - service.yaml
 images:
   - name: ghcr.io/yimin12/star-monitor
-    newTag: sha-364fde8c93ce94a49adca1c01e554555bb43d70d
+    newTag: sha-82b274610bbf4cb47ba3692b58895ab1309454f9
