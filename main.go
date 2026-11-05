@@ -90,7 +90,11 @@ func main() {
 		Handler:           (&web.Server{Store: st, Log: log, Window: window, Interval: interval, Running: c.Running}).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	go c.Loop(ctx)
+	loopDone := make(chan struct{})
+	go func() {
+		defer close(loopDone)
+		c.Loop(ctx)
+	}()
 	go func() {
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -102,4 +106,11 @@ func main() {
 		log.Error("serve", "err", err)
 		os.Exit(1)
 	}
+	// Let the collector record where it stopped, within the pod's 30-second grace period.
+	select {
+	case <-loopDone:
+	case <-time.After(20 * time.Second):
+		log.Warn("collector did not stop in time")
+	}
+	log.Info("stopped")
 }
