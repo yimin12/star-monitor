@@ -2,6 +2,7 @@ name: image
 on:
   push:
     branches: [main]
+    paths-ignore: ['deploy/**']
   pull_request:
 
 permissions:
@@ -43,3 +44,29 @@ jobs:
             ghcr.io/${{ github.repository }}:main
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
+
+  # GitOps: point deploy/kustomization.yaml at the image just built. Argo CD
+  # notices the commit and rolls it out. Commits made with GITHUB_TOKEN do not
+  # start another workflow run, so this does not loop.
+  deploy:
+    needs: image
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    concurrency: deploy
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+      - name: Update the image tag
+        env:
+          TAG: sha-${{ github.sha }}
+        run: |
+          sed -i -E "s/^(    newTag: ).*/\1${TAG}/" deploy/kustomization.yaml
+          grep -q "newTag: ${TAG}$" deploy/kustomization.yaml
+          if git diff --quiet; then echo "already deployed"; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Deploy ${TAG}"
+          git push origin HEAD:main

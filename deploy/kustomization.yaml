@@ -1,0 +1,11 @@
+# Argo CD deploys this directory to the star-monitor namespace.
+# The workflow in .github/workflows/image.yml updates newTag after each image build.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: star-monitor
+resources:
+  - deployment.yaml
+  - service.yaml
+images:
+  - name: ghcr.io/yimin12/star-monitor
+    newTag: sha-6bf5f90e0c959bd119d31157c2d6c352a9125723

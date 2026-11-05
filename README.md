@@ -40,6 +40,14 @@ One SQLite file holds one count per repository per UTC day, kept for 45 days.
 
 `star-monitor -once` runs one collection pass and exits.
 
+## Delivery
+
+GitHub Actions tests every push, builds `ghcr.io/yimin12/star-monitor:sha-<commit>`,
+then commits the new tag to `deploy/kustomization.yaml`. Argo CD in the homelab
+watches `deploy/` and syncs it to the `star-monitor` namespace. Roll back by
+reverting the tag commit. The namespace, volume, route and network policy are
+managed by Terraform in the homelab repository.
+
 ## Development
 
 ```bash

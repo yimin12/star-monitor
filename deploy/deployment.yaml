@@ -1,0 +1,53 @@
+# Synced by Argo CD. The image tag is set in kustomization.yaml by CI.
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: star-monitor, namespace: star-monitor}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: star-monitor}
+  template:
+    metadata:
+      labels: {app: star-monitor}
+    spec:
+      nodeSelector: {topymh.org/node-role: worker}
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: star-monitor
+          image: ghcr.io/yimin12/star-monitor:sha-6bf5f90e0c959bd119d31157c2d6c352a9125723
+          ports: [{name: http, containerPort: 8080}]
+          env:
+            - {name: DB_PATH, value: /data/star-monitor.db}
+            - {name: TMPDIR, value: /tmp}
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef: {name: star-monitor-github, key: token, optional: true}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 512Mi}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 30
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: star-monitor-data}
+        - name: tmp
+          emptyDir: {sizeLimit: 256Mi}
