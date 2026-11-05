@@ -52,29 +52,44 @@ type ghSearch struct {
 }
 
 // Collect walks every star range from MinStars up and passes each page to save.
-func (g *GitHub) Collect(ctx context.Context, save func([]store.Repo) error) (int, error) {
+// Ranges already in prog are skipped, so an interrupted run can resume.
+func (g *GitHub) Collect(ctx context.Context, save func([]store.Repo) error, prog *store.Progress) (int, error) {
 	seen := 0
 	// Ranges are [lo, hi]; hi < 0 means unbounded.
 	queue := [][2]int{{g.MinStars, -1}}
 	for len(queue) > 0 {
 		lo, hi := queue[0][0], queue[0][1]
 		queue = queue[1:]
+		key := fmt.Sprintf("%d..%d", lo, hi)
+		if prog.Done(key) {
+			continue
+		}
 		n, split, err := g.collectRange(ctx, lo, hi, "", save)
 		if err != nil {
 			return seen, err
 		}
 		seen += n
 		if !split {
+			if err := prog.Mark(ctx, key); err != nil {
+				return seen, err
+			}
 			continue
 		}
 		if hi >= 0 && lo == hi {
 			// One star value with over 1000 repositories: split by creation year.
 			for y := 2008; y <= time.Now().Year(); y++ {
+				ykey := fmt.Sprintf("%s@%d", key, y)
+				if prog.Done(ykey) {
+					continue
+				}
 				m, _, err := g.collectRange(ctx, lo, hi, fmt.Sprintf("created:%d-01-01..%d-12-31", y, y), save)
 				if err != nil {
 					return seen, err
 				}
 				seen += m
+				if err := prog.Mark(ctx, ykey); err != nil {
+					return seen, err
+				}
 			}
 			continue
 		}

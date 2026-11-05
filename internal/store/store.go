@@ -5,6 +5,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -45,6 +46,12 @@ CREATE TABLE IF NOT EXISTS runs (
   requests INTEGER NOT NULL DEFAULT 0,
   note TEXT NOT NULL DEFAULT ''
 );
+-- Query ranges finished within a run, so an interrupted run can resume.
+CREATE TABLE IF NOT EXISTS run_ranges (
+  run_id INTEGER NOT NULL,
+  key TEXT NOT NULL,
+  PRIMARY KEY (run_id, key)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS scores (
   repo_id INTEGER PRIMARY KEY,
   s0 INTEGER, now INTEGER, delta INTEGER, recent INTEGER,
@@ -154,10 +161,76 @@ func (s *Store) StartRun(ctx context.Context, source string, now time.Time) (int
 	return id, err
 }
 
-func (s *Store) FinishRun(ctx context.Context, id int64, ok bool, repos, requests int, note string, now time.Time) error {
-	_, err := s.DB.ExecContext(ctx, `UPDATE runs SET finished = ?, ok = ?, repos = ?, requests = ?, note = ? WHERE id = ?`,
-		now.Unix(), ok, repos, requests, note, id)
+// FinishRun closes a run. repos counts every repository of the source seen since
+// the run started, so a resumed run reports its whole pass.
+func (s *Store) FinishRun(ctx context.Context, id int64, ok bool, requests int, note string, now time.Time) error {
+	_, err := s.DB.ExecContext(ctx, `UPDATE runs SET finished = ?, ok = ?, requests = requests + ?, note = ?,
+  repos = (SELECT COUNT(*) FROM repos r WHERE r.source = runs.source AND r.last_seen >= runs.started)
+WHERE id = ?`, now.Unix(), ok, requests, note, id)
 	return err
+}
+
+// AddRequests records requests made by a run segment that was interrupted.
+func (s *Store) AddRequests(ctx context.Context, id int64, requests int) error {
+	_, err := s.DB.ExecContext(ctx, `UPDATE runs SET requests = requests + ? WHERE id = ?`, requests, id)
+	return err
+}
+
+// ResumableRun returns the latest unfinished run of a source started after
+// since, or 0. A run is left unfinished when the process stops mid-pass.
+func (s *Store) ResumableRun(ctx context.Context, source string, since time.Time) (int64, error) {
+	var id int64
+	err := s.DB.QueryRowContext(ctx, `SELECT id FROM runs WHERE source = ? AND finished IS NULL AND started >= ?
+  AND id = (SELECT MAX(id) FROM runs WHERE source = ?)`, source, since.Unix(), source).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return id, err
+}
+
+// Progress tracks finished query ranges of one run.
+type Progress struct {
+	store *Store
+	run   int64
+	done  map[string]bool
+}
+
+func (s *Store) Progress(ctx context.Context, run int64) (*Progress, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT key FROM run_ranges WHERE run_id = ?`, run)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	p := &Progress{store: s, run: run, done: map[string]bool{}}
+	for rows.Next() {
+		var k string
+		if err := rows.Scan(&k); err != nil {
+			return nil, err
+		}
+		p.done[k] = true
+	}
+	return p, rows.Err()
+}
+
+// Done reports whether a range finished earlier in this run.
+func (p *Progress) Done(key string) bool { return p != nil && p.done[key] }
+
+// Mark records a finished range.
+func (p *Progress) Mark(ctx context.Context, key string) error {
+	if p == nil {
+		return nil
+	}
+	p.done[key] = true
+	_, err := p.store.DB.ExecContext(ctx, `INSERT OR IGNORE INTO run_ranges (run_id, key) VALUES (?, ?)`, p.run, key)
+	return err
+}
+
+// Len is the number of finished ranges.
+func (p *Progress) Len() int {
+	if p == nil {
+		return 0
+	}
+	return len(p.done)
 }
 
 // LastRun is the latest run of a source, finished or not.
@@ -207,6 +280,9 @@ func (s *Store) LastSuccess(ctx context.Context, source string) (time.Time, erro
 func (s *Store) Prune(ctx context.Context, keepDays int, now time.Time) error {
 	cut := Day(now) - int64(keepDays)
 	if _, err := s.DB.ExecContext(ctx, `DELETE FROM daily WHERE day < ?`, cut); err != nil {
+		return err
+	}
+	if _, err := s.DB.ExecContext(ctx, `DELETE FROM run_ranges WHERE run_id IN (SELECT id FROM runs WHERE finished IS NOT NULL)`); err != nil {
 		return err
 	}
 	old := `SELECT id FROM repos WHERE last_seen < ?`

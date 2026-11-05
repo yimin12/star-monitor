@@ -36,7 +36,8 @@ type glProject struct {
 	Archived    bool   `json:"archived"`
 }
 
-func (g *GitLab) Collect(ctx context.Context, save func([]store.Repo) error) (int, error) {
+// Collect pages GitLab from the top. It is short, so it does not resume.
+func (g *GitLab) Collect(ctx context.Context, save func([]store.Repo) error, _ *store.Progress) (int, error) {
 	base := g.API
 	if base == "" {
 		base = "https://gitlab.com/api/v4"

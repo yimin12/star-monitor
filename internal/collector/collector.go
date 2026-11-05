@@ -86,25 +86,46 @@ func (c *Collector) RunOnce(ctx context.Context) {
 	}
 }
 
-func (c *Collector) collect(ctx context.Context, name string, fn func(context.Context, func([]store.Repo) error) (int, error), requests func() int) {
+func (c *Collector) collect(ctx context.Context, name string, fn func(context.Context, func([]store.Repo) error, *store.Progress) (int, error), requests func() int) {
 	start := time.Now()
 	before := requests()
-	id, err := c.Store.StartRun(ctx, name, start)
+	id, err := c.Store.ResumableRun(ctx, name, start.Add(-c.Interval))
 	if err != nil {
-		c.Log.Error("start run", "source", name, "err", err)
+		c.Log.Error("find resumable run", "source", name, "err", err)
 		return
 	}
-	c.Log.Info("collect start", "source", name)
-	n, err := fn(ctx, func(batch []store.Repo) error { return c.Store.SaveBatch(ctx, batch, time.Now()) })
+	resumed := id != 0
+	if !resumed {
+		if id, err = c.Store.StartRun(ctx, name, start); err != nil {
+			c.Log.Error("start run", "source", name, "err", err)
+			return
+		}
+	}
+	prog, err := c.Store.Progress(ctx, id)
+	if err != nil {
+		c.Log.Error("load progress", "source", name, "err", err)
+		return
+	}
+	c.Log.Info("collect start", "source", name, "run", id, "resumed", resumed, "ranges_done", prog.Len())
+	n, err := fn(ctx, func(batch []store.Repo) error { return c.Store.SaveBatch(ctx, batch, time.Now()) }, prog)
+	bg := context.WithoutCancel(ctx)
+	if errors.Is(err, context.Canceled) {
+		// Shutting down: leave the run open so the next start resumes it.
+		if aerr := c.Store.AddRequests(bg, id, requests()-before); aerr != nil {
+			c.Log.Error("record requests", "err", aerr)
+		}
+		c.Log.Info("collect interrupted", "source", name, "run", id, "ranges_done", prog.Len())
+		return
+	}
 	note := ""
 	if err != nil {
 		note = err.Error()
 		c.Log.Error("collect failed", "source", name, "repos", n, "err", err)
 	}
-	if ferr := c.Store.FinishRun(context.WithoutCancel(ctx), id, err == nil, n, requests()-before, note, time.Now()); ferr != nil {
+	if ferr := c.Store.FinishRun(bg, id, err == nil, requests()-before, note, time.Now()); ferr != nil {
 		c.Log.Error("finish run", "err", ferr)
 	}
-	c.Log.Info("collect done", "source", name, "repos", n, "requests", requests()-before, "took", time.Since(start).Round(time.Second).String())
+	c.Log.Info("collect done", "source", name, "run", id, "repos", n, "requests", requests()-before, "took", time.Since(start).Round(time.Second).String())
 }
 
 func (c *Collector) recompute(ctx context.Context) {
