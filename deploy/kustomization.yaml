@@ -9,4 +9,4 @@ resources:
 images:
   - name: ghcr.io/yimin12/star-monitor
     newName: git.dev.topymh.org/yimin12/star-monitor
-    newTag: sha-82ed142a2d1b9918275a7c246279b30ba3b15d65
+    newTag: sha-a7a1bafcedf6776327fab6a34baebbfa2d42c6f2
