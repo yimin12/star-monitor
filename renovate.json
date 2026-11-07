@@ -1,0 +1,56 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Replaces .github/dependabot.yml (removed 2026-11-07): weekly PRs, go modules and actions grouped. Run by the homelab's Renovate CronJob (homelab-k3s develop.md 27).",
+  "extends": ["config:recommended"],
+  "timezone": "America/New_York",
+  "schedule": ["* 0-8 * * 1"],
+  "dependencyDashboard": false,
+  "postUpdateOptions": ["gomodTidy"],
+  "packageRules": [
+    {
+      "description": "Dependabot group 'go': all Go modules in one PR.",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["require", "indirect"],
+      "groupName": "go"
+    },
+    {
+      "description": "Dependabot group 'actions': all workflow actions in one PR.",
+      "matchManagers": ["github-actions"],
+      "groupName": "actions"
+    },
+    {
+      "description": "Go toolchain moves together (homelab develop.md 19.3): Dockerfile golang image, the setup-go version in the workflow and the golang image in .githooks/pre-push.",
+      "matchDepNames": ["golang", "go"],
+      "matchDepTypes": ["final", "stage", "golang-toolchain", "docker"],
+      "groupName": "Go toolchain",
+      "separateMajorMinor": false,
+      "separateMinorPatch": false
+    },
+    {
+      "description": "Keep go.mod's minimum 'go' line: the Mac's local Go is 1.22 and pre-commit vet fails above it. It only moves when a dependency requires it (go mod tidy).",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["golang", "toolchain"],
+      "enabled": false
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "setup-go version in Forgejo workflows",
+      "managerFilePatterns": ["/^\\.forgejo/workflows/.+\\.ya?ml$/"],
+      "matchStrings": ["go-version: \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""],
+      "depNameTemplate": "golang",
+      "datasourceTemplate": "docker",
+      "depTypeTemplate": "golang-toolchain"
+    },
+    {
+      "customType": "regex",
+      "description": "golang image used by the local pre-push hook",
+      "managerFilePatterns": ["/^\\.githooks/.+$/"],
+      "matchStrings": ["\\sgolang:(?<currentValue>\\d+\\.\\d+\\.\\d+)\\s"],
+      "depNameTemplate": "golang",
+      "datasourceTemplate": "docker",
+      "depTypeTemplate": "golang-toolchain"
+    }
+  ]
+}
