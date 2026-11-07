@@ -13,6 +13,8 @@ spec:
     spec:
       nodeSelector: {topymh.org/node-role: worker}
       automountServiceAccountToken: false
+      # Read-only pull credential for git.dev.topymh.org (homelab-k3s scripts/provision_forgejo_ci.py).
+      imagePullSecrets: [{name: forgejo-registry}]
       enableServiceLinks: false
       securityContext:
         runAsNonRoot: true

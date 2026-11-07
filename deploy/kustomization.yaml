@@ -1,5 +1,5 @@
 # Argo CD deploys this directory to the star-monitor namespace.
-# The workflow in .github/workflows/image.yml updates newTag after each image build.
+# .forgejo/workflows/image.yml sets newName (Forgejo's registry) and newTag after each image build.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: star-monitor

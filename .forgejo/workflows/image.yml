@@ -1,0 +1,98 @@
+# Forgejo Actions on git.dev.topymh.org (runner "k8s-amd64" in the homelab, homelab-k3s develop.md 27).
+# Same gates as the old GitHub workflow: gofmt, vet, -race tests, govulncheck, image with SBOM and
+# provenance, Trivy (fixable high/critical blocks the deploy), then the GitOps tag bump.
+name: image
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['deploy/**']
+  pull_request:
+
+env:
+  IMAGE: git.dev.topymh.org/yimin12/star-monitor
+
+jobs:
+  test:
+    runs-on: k8s-amd64
+    steps:
+      - uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: https://github.com/actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.10"
+      - name: Formatting
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - run: go vet ./...
+      - name: Tests with the race detector
+        run: CGO_ENABLED=1 go test -race -count=1 ./...
+      - name: Known vulnerabilities in reachable code
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+  # Rootless BuildKit next to the runner (BUILDKIT_HOST); Go cross-compiles, so no emulation.
+  image:
+    needs: test
+    if: github.event_name == 'push'
+    runs-on: k8s-amd64
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: build
+        env:
+          TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          SHA: ${{ github.sha }}
+        run: |
+          export DOCKER_CONFIG="$RUNNER_TEMP/docker-$SHA"
+          trap 'rm -rf "$DOCKER_CONFIG"' EXIT
+          mkdir -p "$DOCKER_CONFIG"
+          printf '{"auths":{"git.dev.topymh.org":{"auth":"%s"}}}' "$(printf 'yimin12:%s' "$TOKEN" | base64 -w0)" > "$DOCKER_CONFIG/config.json"
+          buildctl build --frontend dockerfile.v0 --local context=. --local dockerfile=. \
+            --opt platform=linux/amd64,linux/arm64 \
+            --opt attest:sbom= --opt attest:provenance=mode=max \
+            --opt label:org.opencontainers.image.source=https://git.dev.topymh.org/yimin12/star-monitor \
+            --opt label:org.opencontainers.image.revision=$SHA \
+            --output "type=image,\"name=$IMAGE:sha-$SHA,$IMAGE:main\",push=true" \
+            --metadata-file meta.json
+          digest=$(node -p 'require("./meta.json")["containerimage.digest"]')
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "pushed $IMAGE@$digest"
+
+  # Only images without fixable high or critical vulnerabilities are deployed (both platforms).
+  scan:
+    needs: image
+    runs-on: k8s-amd64
+    steps:
+      - name: Trivy image scan
+        env:
+          TRIVY_USERNAME: yimin12
+          TRIVY_PASSWORD: ${{ secrets.REGISTRY_TOKEN }}
+          REF: ${{ env.IMAGE }}@${{ needs.image.outputs.digest }}
+        run: |
+          for p in linux/amd64 linux/arm64; do
+            trivy image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed --no-progress --platform "$p" "$REF"
+          done
+
+  # GitOps: point deploy/kustomization.yaml at the image just built; Argo CD gets Forgejo's push
+  # webhook and rolls it out. Pushes made with the automatic token do not start workflows, and
+  # deploy/** is ignored above anyway, so this does not loop.
+  deploy:
+    needs: scan
+    if: github.event_name == 'push'
+    runs-on: k8s-amd64
+    concurrency: deploy
+    steps:
+      - uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+      - name: Update the image
+        env:
+          TAG: sha-${{ github.sha }}
+        run: |
+          f=deploy/kustomization.yaml
+          sed -i -E "s|^(    newName: ).*|\1${IMAGE}|; s/^(    newTag: ).*/\1${TAG}/" "$f"
+          grep -q "^    newName: " "$f" || sed -i -E "s|^(  - name: ghcr.io/yimin12/star-monitor)$|\1\n    newName: ${IMAGE}|" "$f"
+          grep -q "newName: ${IMAGE}$" "$f" && grep -q "newTag: ${TAG}$" "$f"
+          if git diff --quiet; then echo "already deployed"; exit 0; fi
+          git config user.name "forgejo-actions[bot]"
+          git config user.email "actions@git.dev.topymh.org"
+          git commit -am "Deploy ${TAG}"
+          git push origin HEAD:main

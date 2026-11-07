@@ -43,10 +43,12 @@ One SQLite file holds one count per repository per UTC day, kept for 45 days.
 
 ## Delivery
 
-GitHub Actions tests every push, builds `ghcr.io/yimin12/star-monitor:sha-<commit>`,
-then commits the new tag to `deploy/kustomization.yaml`. Argo CD in the homelab
-watches `deploy/` and syncs it to the `star-monitor` namespace. Roll back by
-reverting the tag commit. The namespace, volume, route and network policy are
+The primary repository is `https://git.dev.topymh.org/yimin12/star-monitor` (Forgejo in the
+homelab); GitHub is a push mirror and its Actions are off. Forgejo Actions tests every push,
+builds `git.dev.topymh.org/yimin12/star-monitor:sha-<commit>` for amd64 and arm64, scans it
+with Trivy, then commits the new tag to `deploy/kustomization.yaml`. Argo CD gets Forgejo's
+push webhook and syncs `deploy/` to the `star-monitor` namespace. Roll back by reverting the
+tag commit. The namespace, volume, route and network policy are
 managed by Terraform in the homelab repository.
 
 ## Development

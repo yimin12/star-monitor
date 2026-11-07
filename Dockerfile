@@ -1,9 +1,11 @@
-FROM golang:1.26.10-alpine AS build
+# Builds on the build machine's platform and cross-compiles for each target (amd64, arm64).
+FROM --platform=$BUILDPLATFORM golang:1.26.10-alpine AS build
+ARG TARGETOS TARGETARCH
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/star-monitor . && mkdir -p /out/data
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/star-monitor . && mkdir -p /out/data
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/star-monitor /star-monitor
