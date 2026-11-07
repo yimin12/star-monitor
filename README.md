@@ -48,7 +48,7 @@ homelab); GitHub is a push mirror and its Actions are off. Forgejo Actions tests
 builds `git.dev.topymh.org/yimin12/star-monitor:sha-<commit>` for amd64 and arm64, scans it
 with Trivy, then commits the new tag to `deploy/kustomization.yaml`. Argo CD gets Forgejo's
 push webhook and syncs `deploy/` to the `star-monitor` namespace. Roll back by reverting the
-tag commit. The namespace, volume, route and network policy are
+tag commit (`git revert <Deploy commit>`). The namespace, volume, route and network policy are
 managed by Terraform in the homelab repository.
 
 ## Development
