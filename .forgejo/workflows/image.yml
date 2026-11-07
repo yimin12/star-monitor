@@ -1,5 +1,5 @@
 # Forgejo Actions on git.dev.topymh.org (runner "k8s-amd64" in the homelab, homelab-k3s develop.md 27).
-# Same gates as the old GitHub workflow: gofmt, vet, -race tests, govulncheck, image with SBOM and
+# Same gates as the old GitHub workflow (.github/workflows/image.yml before 2026-11-07): gofmt, vet, -race tests, govulncheck, image with SBOM and
 # provenance, Trivy (fixable high/critical blocks the deploy), then the GitOps tag bump.
 name: image
 on:
