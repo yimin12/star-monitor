@@ -9,6 +9,7 @@
     "* 0-8 * * 1"
   ],
   "dependencyDashboard": false,
+  "prHourlyLimit": 0,
   "postUpdateOptions": [
     "gomodTidy"
   ],
