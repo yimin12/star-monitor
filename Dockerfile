@@ -1,5 +1,5 @@
 # Builds on the build machine's platform and cross-compiles for each target (amd64, arm64).
-FROM --platform=$BUILDPLATFORM golang:1.26.10-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine AS build
 ARG TARGETOS TARGETARCH
 WORKDIR /src
 COPY go.mod go.sum ./

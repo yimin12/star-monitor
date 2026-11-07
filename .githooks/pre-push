@@ -7,5 +7,5 @@ if ! docker info >/dev/null 2>&1; then
   echo "pre-push: Docker is not running, tests skipped (CI will still run them)"; exit 0
 fi
 root=$(git rev-parse --show-toplevel)
-docker run --rm -v "$root":/src -w /src -v sm-gomod:/go/pkg/mod golang:1.26.10 \
+docker run --rm -v "$root":/src -w /src -v sm-gomod:/go/pkg/mod golang:1.27.3 \
   sh -c 'go vet ./... && go test -count=1 ./...'
